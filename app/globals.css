@@ -1,26 +1,93 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Thurvate: a fixed light palette. Deliberately not theme-aware — this is a
+   till-side tool used under shop lighting, and the ink/paper contrast is the
+   design. */
+@theme {
+  --color-paper: #fbfbfa;
+  --color-panel: #f3f3f1;
+  --color-panel-deep: #f1f1ef;
+  --color-ink: #0b0b0b;
+  --color-ink-hover: #232320;
+  --color-ash: #3a3a37;
+  --color-slate: #4a4a47;
+  --color-stone: #5b5b58;
+  --color-muted: #7a7a76;
+  --color-faint: #8a8a86;
+
+  --color-line: #e2e2df;
+  --color-line-soft: #ebebe8;
+  --color-line-mid: #dcdcd8;
+  --color-line-strong: #d3d3cf;
+  --color-edge: #cfcfca;
+  --color-fill: #eeeeeb;
+  --color-fill-deep: #e8e8e5;
+
+  --color-signal: oklch(0.49 0.16 26);
+
+  --font-sans: var(--font-inter), Inter, Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+
+  --animate-rule: thv-rule 1.5s cubic-bezier(0.65, 0.05, 0.36, 1) infinite;
+  --animate-beacon: thv-beacon 2.6s ease-in-out infinite;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@keyframes thv-rule {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes thv-beacon {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  /* Hairline rules read as 2px on retina otherwise. */
+  ::placeholder {
+    color: var(--color-faint);
+  }
+}
+
+@utility eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* The capture frame and image placeholders share this hatched fill. */
+@utility hatched {
+  background-color: var(--color-fill);
+  background-image: repeating-linear-gradient(
+    135deg,
+    #e4e4e0 0 8px,
+    var(--color-fill) 8px 16px
+  );
 }
