@@ -18,7 +18,7 @@ export const SOURCE_MARK: Record<BarcodeSource, string> = {
 export interface CapturedImage {
   /** `data:image/jpeg;base64,...` — for <img> previews only. */
   dataUrl: string;
-  /** Bare base64 payload, no data-URL prefix — this is what goes to Gemini. */
+  /** Bare base64 payload, no data-URL prefix — wrapped into a data URL at send time. */
   base64: string;
   mimeType: string;
   width: number;
@@ -46,7 +46,7 @@ export interface FieldConfidence {
   price: number;
 }
 
-/** The shape Gemini is asked to return, after normalisation. */
+/** The shape the model is asked to return, after normalisation. */
 export interface ExtractedProduct {
   productName: string;
   brand: string;
@@ -85,6 +85,8 @@ export type ExtractErrorCode =
   | "BAD_REQUEST"
   | "QUOTA"
   | "RATE_LIMIT"
+  /** The model provider is over capacity — distinct from rate limited or offline. */
+  | "BUSY"
   | "PARSE"
   | "UPSTREAM";
 

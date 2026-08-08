@@ -1,22 +1,34 @@
 # Thurvate Product Scanner
 
 Photograph a retail pack, get a row of point-of-sale data. The app captures a product's
-barcode, takes a front and back photo, sends both to Google Gemini in one call, and
-exports the result as a CSV formatted for import into [Aronium POS](https://www.aronium.com/).
+barcode, takes a front and back photo, sends both to Groq in one call, and exports the
+result as a CSV formatted for import into [Aronium POS](https://www.aronium.com/).
 
-Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · Gemini `gemini-2.0-flash`.
+Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · Groq `qwen/qwen3.6-27b`.
 No database, no auth, no image storage — photos are processed in the request and discarded.
 
 ## Running it
 
 ```bash
 npm install
-cp .env.example .env.local   # then paste your key into GEMINI_API_KEY
+cp .env.example .env.local   # then paste your key into GROQ_API_KEY
 npm run dev
 ```
 
-Deploying to Vercel: set `GEMINI_API_KEY` in the project's environment variables. Nothing
+Deploying to Vercel: set `GROQ_API_KEY` in the project's environment variables. Nothing
 else is required.
+
+### Why Groq, and why this model
+
+`qwen/qwen3.6-27b` is the **only image-capable model on Groq's free tier** — everything
+else on offer is text, audio or a safety classifier. It was chosen because it accepts
+**multiple images in one request**, which the design depends on (see below). Verified:
+given the front and back separately labelled, it correctly attributes text to the image it
+came from rather than blurring the two together.
+
+Google Gemini was the original target and is no longer viable on a free account: the 2.x
+Flash models return *"no longer available to new users"*, and `gemini-2.0-flash`'s free
+tier is retired outright.
 
 ## The design principle
 
@@ -41,7 +53,7 @@ characters), which no typist can sustain. The source is recorded as `scanned`, `
 2. **Front photo**, then **back photo** — `<input type="file" capture="environment">`,
    resized client-side to 1024px on the long edge and re-encoded as JPEG at 0.8 quality.
 3. **Review** both shots, retake either.
-4. **Extract** — one Gemini call.
+4. **Extract** — one Groq call.
 5. **Confirm** the editable results form.
 6. Add another, or finish and download the CSV.
 
@@ -87,6 +99,28 @@ The AI disclaimer deliberately does **not** appear in the CSV — the file stays
 again in the API route with an IP-keyed counter. Only successful extractions count; a
 failed call is free.
 
+### Groq's limits, which are separate — and it's tokens, not requests
+
+The app's 10/day cap is its own; Groq's free tier applies on top of it: **1000 requests per
+day, but only 8000 tokens per minute.**
+
+Requests are not the constraint — tokens are. A 1024px front-and-back pair costs **~3700
+input tokens**, so in practice you get **about two scans per minute**. Ten products takes
+roughly five minutes of wall clock, not because the model is slow but because the budget
+refills on a rolling minute.
+
+Hitting it produces a distinct `RATE_LIMIT` message quoting Groq's own `retry-after` value,
+rather than the daily-limit screen — and it does not consume one of your 10 scans.
+
+Two things keep the token cost down:
+
+- **Thinking is off** (`reasoning_effort: "none"`). Qwen reasons before answering by
+  default, spending hundreds of completion tokens against that same ceiling. Reading fields
+  off a label is perception, not reasoning; with it off, completions run ~20 tokens.
+- **Images are downscaled to 1024px** before upload ([`lib/image.ts`](lib/image.ts)).
+  Dropping to 768px would roughly halve the token cost and double the scans per minute, at
+  the cost of legibility on small printed MRP text — the one field you least want misread.
+
 ⚠️ The server-side counter lives in memory ([`lib/server-quota.ts`](lib/server-quota.ts)).
 Serverless instances are ephemeral and several may run concurrently, so it is a speed bump
 rather than exact accounting. Swap the `Map` for Vercel KV if the limit ever needs to hold
@@ -97,11 +131,11 @@ precisely.
 ```
 app/
   page.tsx              screen state machine, session list, quota wiring
-  api/extract/route.ts  the only place the Gemini key is ever touched
+  api/extract/route.ts  the only place the Groq key is ever touched
 lib/
   barcode.ts            checksum, validation, scanner-vs-typed detection
   csv.ts                Aronium export, duplicate-name resolution
-  gemini-prompt.ts      system instruction and task prompt
+  prompt.ts             system instruction and task prompt
   image.ts              client-side downscale + JPEG re-encode
   quota.ts              client daily counter
   server-quota.ts       IP-keyed daily counter

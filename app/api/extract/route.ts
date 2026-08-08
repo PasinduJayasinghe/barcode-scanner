@@ -1,6 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
-
-import { buildTaskPrompt, SYSTEM_INSTRUCTION } from "@/lib/gemini-prompt";
+import { buildTaskPrompt, SYSTEM_INSTRUCTION } from "@/lib/prompt";
 import { clientKey, consumeQuota, hasQuota } from "@/lib/server-quota";
 import { normalizeBarcode } from "@/lib/barcode";
 import {
@@ -16,15 +14,26 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+
+/**
+ * The only image-capable model on Groq's free tier. It handles multiple images
+ * in one request, which the whole design depends on — the front and back have
+ * to be cross-referenced, not read separately.
+ *
+ * Free-tier limits are 1000 requests/day but only 8000 tokens/minute, and a
+ * 1024px image pair costs ~3700 of those. Tokens, not requests, are what runs
+ * out; see the rate-limit handling below.
+ */
+const MODEL = process.env.GROQ_MODEL ?? "qwen/qwen3.6-27b";
 
 /** Two 1024px JPEGs land around 1MB of base64; this leaves generous headroom. */
 const MAX_IMAGE_BASE64_CHARS = 4_000_000;
 
 export async function POST(request: Request): Promise<Response> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return fail("CONFIG", "The server is missing its Gemini API key. Set GEMINI_API_KEY.", 500);
+    return fail("CONFIG", "The server is missing its Groq API key. Set GROQ_API_KEY.", 500);
   }
 
   let body: ExtractRequestBody;
@@ -45,49 +54,27 @@ export async function POST(request: Request): Promise<Response> {
 
   const suppliedBarcode = body.barcode ? normalizeBarcode(body.barcode) : null;
 
-  let rawText: string;
+  let response: Response;
   try {
-    const ai = new GoogleGenAI({ apiKey });
-
-    // One call, both images. The model can only reconcile the front and back —
-    // name on one, price and barcode on the other — if it sees them together.
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: "Image 1: front of pack" },
-            { inlineData: { mimeType: body.front.mimeType, data: body.front.base64 } },
-            { text: "Image 2: back of pack" },
-            { inlineData: { mimeType: body.back.mimeType, data: body.back.base64 } },
-            { text: buildTaskPrompt(suppliedBarcode) },
-          ],
-        },
-      ],
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: "application/json",
-        temperature: 0.1,
-      },
-    });
-
-    rawText = response.text ?? "";
-  } catch (error) {
-    return fromUpstreamError(error);
+    response = await callGroq(apiKey, body, suppliedBarcode);
+  } catch {
+    return fail("UPSTREAM", "Couldn't reach Groq. Check your connection and retry.", 502);
   }
 
+  if (!response.ok) {
+    return await fromUpstreamError(response);
+  }
+
+  const payload = (await response.json().catch(() => null)) as GroqResponse | null;
+  const rawText = payload?.choices?.[0]?.message?.content ?? "";
+
   if (!rawText.trim()) {
-    return fail("PARSE", "Gemini returned an empty response. Try again.", 502);
+    return fail("PARSE", "The model returned an empty response. Try again.", 502);
   }
 
   const parsed = parseModelJson(rawText);
   if (!parsed) {
-    return fail(
-      "PARSE",
-      "Gemini's reply wasn't valid JSON. This usually clears on a retry.",
-      502,
-    );
+    return fail("PARSE", "The model's reply wasn't valid JSON. This usually clears on a retry.", 502);
   }
 
   consumeQuota(key);
@@ -96,6 +83,56 @@ export async function POST(request: Request): Promise<Response> {
     ok: true,
     data: normalize(parsed, suppliedBarcode),
   } satisfies ExtractResponse);
+}
+
+interface GroqResponse {
+  choices?: { message?: { content?: string } }[];
+}
+
+/**
+ * One call, both images. The model can only reconcile the front and back —
+ * name on one, price and barcode on the other — if it sees them together.
+ *
+ * `reasoning_effort: "none"` matters more than it looks. Qwen thinks before
+ * answering by default, which spends hundreds of completion tokens against an
+ * 8000/minute ceiling and buys nothing: reading fields off a label is
+ * perception, not reasoning. With it off, completions run ~20 tokens.
+ */
+function callGroq(
+  apiKey: string,
+  body: ExtractRequestBody,
+  suppliedBarcode: string | null,
+): Promise<Response> {
+  const dataUrl = (image: { mimeType: string; base64: string }) =>
+    `data:${image.mimeType};base64,${image.base64}`;
+
+  return fetch(GROQ_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      temperature: 0.1,
+      max_tokens: 1200,
+      reasoning_effort: "none",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: SYSTEM_INSTRUCTION },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Image 1: front of pack" },
+            { type: "image_url", image_url: { url: dataUrl(body.front) } },
+            { type: "text", text: "Image 2: back of pack" },
+            { type: "image_url", image_url: { url: dataUrl(body.back) } },
+            { type: "text", text: buildTaskPrompt(suppliedBarcode) },
+          ],
+        },
+      ],
+    }),
+  });
 }
 
 function validateRequest(body: ExtractRequestBody): string | null {
@@ -112,9 +149,9 @@ function validateRequest(body: ExtractRequestBody): string | null {
 }
 
 /**
- * The model is asked for bare JSON and pinned to an application/json response
- * mime type, but a stray ```json fence still turns up occasionally. Strip it
- * before parsing rather than surfacing a syntax error to the shopkeeper.
+ * JSON mode is requested, but a stray ```json fence still turns up
+ * occasionally. Strip it before parsing rather than surfacing a syntax error
+ * to the shopkeeper.
  */
 function parseModelJson(raw: string): Record<string, unknown> | null {
   const candidates = [raw.trim(), stripFences(raw), sliceOutermostObject(raw)];
@@ -152,8 +189,7 @@ function sliceOutermostObject(raw: string): string {
 function normalize(raw: Record<string, unknown>, suppliedBarcode: string | null): ExtractedProduct {
   const confidence = (raw.confidence ?? {}) as Record<string, unknown>;
 
-  const modelBarcode =
-    typeof raw.barcode === "string" ? normalizeBarcode(raw.barcode) : "";
+  const modelBarcode = typeof raw.barcode === "string" ? normalizeBarcode(raw.barcode) : "";
 
   return {
     productName: text(raw.productName),
@@ -197,34 +233,42 @@ function confidenceScore(value: unknown): number {
   return Math.max(0, Math.min(1, parsed));
 }
 
-/** Gemini's own rate limit must read differently from the user's daily quota. */
-function fromUpstreamError(error: unknown): Response {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error("[extract] Gemini request failed:", message);
+/** Groq's own limits must read differently from the user's daily quota. */
+async function fromUpstreamError(response: Response): Promise<Response> {
+  const detail = await response.text().catch(() => "");
+  console.error(`[extract] Groq request failed: ${response.status} ${detail.slice(0, 400)}`);
 
-  // The SDK puts the upstream JSON body in `message`, so the reliable signal is
-  // the `status` string inside it rather than the HTTP code — a rejected key
-  // comes back as 400 INVALID_ARGUMENT / API_KEY_INVALID, not 401.
-  const httpStatus = (error as { status?: number })?.status;
-  const upstream = `${message} ${httpStatus ?? ""}`;
-
-  if (/API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED|API key not valid/i.test(upstream)) {
-    return fail(
-      "CONFIG",
-      "Gemini rejected the API key. Check GEMINI_API_KEY on the server.",
-      500,
-    );
+  if (response.status === 401 || response.status === 403) {
+    return fail("CONFIG", "Groq rejected the API key. Check GROQ_API_KEY on the server.", 500);
   }
 
-  if (httpStatus === 429 || /RESOURCE_EXHAUSTED|rate.?limit|too many requests/i.test(upstream)) {
+  if (response.status === 429) {
+    // Tokens per minute, not requests per day, is what actually runs out here —
+    // an image pair costs ~3700 of an 8000/min budget. Groq tells us how long
+    // to wait, so pass that on instead of a vague "try later".
+    const wait = Math.ceil(Number(response.headers.get("retry-after") ?? "30"));
+    const seconds = Number.isFinite(wait) && wait > 0 ? wait : 30;
     return fail(
       "RATE_LIMIT",
-      "Gemini is rate limiting requests right now. Wait a moment and retry — this is not your daily product limit.",
+      `Groq's per-minute limit is full — two photos use most of it. Wait about ${seconds} seconds and press Extract again. This is Groq's limit, not your daily one, and it hasn't cost you a scan.`,
       503,
     );
   }
 
-  return fail("UPSTREAM", "Couldn't reach Gemini. Check your connection and retry.", 502);
+  // Groq's capacity problem, not the user's connection.
+  if (response.status === 503 || response.status === 502) {
+    return fail(
+      "BUSY",
+      "Groq is busy right now — that's on their side, not yours. Wait a few seconds and press Extract again; it hasn't cost you a scan.",
+      503,
+    );
+  }
+
+  if (response.status === 413) {
+    return fail("BAD_REQUEST", "Those photos were too large to send. Retake them.", 400);
+  }
+
+  return fail("UPSTREAM", "Couldn't reach Groq. Check your connection and retry.", 502);
 }
 
 function fail(code: ExtractErrorCode, message: string, status: number): Response {
