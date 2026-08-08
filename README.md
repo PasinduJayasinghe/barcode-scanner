@@ -93,6 +93,14 @@ barcodes are blocked earlier, at entry.
 
 The AI disclaimer deliberately does **not** appear in the CSV — the file stays clean for import.
 
+### One thing that may look odd
+
+A field beginning with `=`, `+`, `-` or `@` is written with a leading apostrophe
+(`'=1+1`). Excel and LibreOffice execute such cells as formulas *even inside quoted CSV
+fields*, and product names here originate from OCR of a photographed label — so the first
+character is effectively chosen by whoever printed the packaging. The apostrophe forces the
+cell to be read as text. Nothing is stripped, and ordinary names are untouched.
+
 ## Daily quota
 
 10 products per calendar day, tracked in `localStorage` keyed by local date and enforced

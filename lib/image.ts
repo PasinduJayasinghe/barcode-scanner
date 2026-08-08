@@ -31,18 +31,21 @@ export async function processImageFile(
   if ("close" in source.image) source.image.close();
   if (source.revoke) source.revoke();
 
-  const dataUrl = canvas.toDataURL("image/jpeg", quality);
-  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-
   return {
-    dataUrl,
-    base64,
+    dataUrl: canvas.toDataURL("image/jpeg", quality),
     mimeType: "image/jpeg",
     width,
     height,
-    // base64 encodes 3 bytes as 4 chars; subtract padding for the real size.
-    bytes: Math.round((base64.length * 3) / 4),
   };
+}
+
+/**
+ * Strips the `data:…;base64,` prefix. Done at send time rather than at capture
+ * so the payload isn't held in memory alongside the data URL for the whole
+ * session — see the note on `CapturedImage`.
+ */
+export function toBase64(image: CapturedImage): string {
+  return image.dataUrl.slice(image.dataUrl.indexOf(",") + 1);
 }
 
 interface DecodedImage {

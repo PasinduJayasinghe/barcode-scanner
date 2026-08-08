@@ -14,16 +14,20 @@ export const SOURCE_MARK: Record<BarcodeSource, string> = {
   photo: "PH",
 };
 
-/** A photo after client-side downscale + JPEG re-encode. */
+/**
+ * A photo after client-side downscale + JPEG re-encode.
+ *
+ * Only the data URL is retained. Keeping a separate bare-base64 copy alongside
+ * it held every photo in memory twice — roughly a megabyte of duplication for a
+ * front/back pair, on the phones least able to spare it. The payload is sliced
+ * out once, at send time, via `toBase64`.
+ */
 export interface CapturedImage {
-  /** `data:image/jpeg;base64,...` — for <img> previews only. */
+  /** `data:image/jpeg;base64,...` — used directly as an <img> src. */
   dataUrl: string;
-  /** Bare base64 payload, no data-URL prefix — wrapped into a data URL at send time. */
-  base64: string;
   mimeType: string;
   width: number;
   height: number;
-  bytes: number;
 }
 
 export const CATEGORIES = [

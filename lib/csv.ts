@@ -22,8 +22,27 @@ export const CSV_HEADERS = [
 
 const CRLF = "\r\n";
 
+/**
+ * Excel and LibreOffice evaluate any cell whose text starts with one of these,
+ * even inside a quoted CSV field. Quoting is not a defence.
+ */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+/**
+ * Spreadsheet formula injection is a live risk here, not a theoretical one:
+ * product names arrive from OCR of a photographed label, so their first
+ * character is chosen by whoever printed the packaging. A name like
+ * `=HYPERLINK("http://…")` lands in the CSV, and the shopkeeper opening the
+ * file to check it before importing is enough to fire it.
+ *
+ * A leading apostrophe forces the cell to be read as literal text. It is
+ * preserved rather than stripped so no data is silently lost — and legitimate
+ * retail names effectively never begin with these characters, so the cosmetic
+ * cost falls only on input that was already anomalous.
+ */
 function escapeField(value: string): string {
-  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  const safe = FORMULA_LEAD.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 /**

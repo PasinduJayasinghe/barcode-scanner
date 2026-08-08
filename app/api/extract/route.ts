@@ -27,8 +27,16 @@ const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
  */
 const MODEL = process.env.GROQ_MODEL ?? "qwen/qwen3.6-27b";
 
-/** Two 1024px JPEGs land around 1MB of base64; this leaves generous headroom. */
-const MAX_IMAGE_BASE64_CHARS = 4_000_000;
+/**
+ * A 1024px JPEG at 0.8 quality runs 200–400KB, so ~550K base64 characters.
+ * 1.5M leaves generous headroom while keeping a pair well inside the 4.5MB
+ * request ceiling Vercel enforces — the old 4M allowed a body the platform
+ * would have rejected anyway.
+ */
+const MAX_IMAGE_BASE64_CHARS = 1_500_000;
+
+/** Checked against Content-Length before the body is read into memory. */
+const MAX_BODY_BYTES = 4_500_000;
 
 export async function POST(request: Request): Promise<Response> {
   const apiKey = process.env.GROQ_API_KEY;
@@ -36,10 +44,22 @@ export async function POST(request: Request): Promise<Response> {
     return fail("CONFIG", "The server is missing its Groq API key. Set GROQ_API_KEY.", 500);
   }
 
+  // Reject oversized uploads from the header, before `json()` pulls the whole
+  // body into memory and parses it. Content-Length can be absent or dishonest,
+  // so the per-image check below still runs; the platform caps the true ceiling.
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return fail("BAD_REQUEST", "Those photos were too large to send. Retake them.", 413);
+  }
+
   let body: ExtractRequestBody;
   try {
     body = (await request.json()) as ExtractRequestBody;
   } catch {
+    return fail("BAD_REQUEST", "The request body could not be read.", 400);
+  }
+
+  if (typeof body !== "object" || body === null) {
     return fail("BAD_REQUEST", "The request body could not be read.", 400);
   }
 
@@ -52,7 +72,10 @@ export async function POST(request: Request): Promise<Response> {
     return fail("QUOTA", "You've reached today's limit of 10 products.", 429);
   }
 
-  const suppliedBarcode = body.barcode ? normalizeBarcode(body.barcode) : null;
+  // Digits only, and only if it was a string to begin with — this value is
+  // interpolated into the prompt, so it must not carry arbitrary text.
+  const suppliedBarcode =
+    typeof body.barcode === "string" ? normalizeBarcode(body.barcode) || null : null;
 
   let response: Response;
   try {
@@ -135,14 +158,31 @@ function callGroq(
   });
 }
 
+/** Only what the client encoder actually produces, and what the model accepts. */
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+const BASE64_ONLY = /^[A-Za-z0-9+/]+={0,2}$/;
+
 function validateRequest(body: ExtractRequestBody): string | null {
   for (const side of ["front", "back"] as const) {
-    const image = body?.[side];
-    if (!image?.base64 || !image?.mimeType) {
+    const image = body[side];
+
+    if (typeof image?.base64 !== "string" || typeof image?.mimeType !== "string") {
+      return `The ${side} photograph is missing.`;
+    }
+    if (image.base64.length === 0) {
       return `The ${side} photograph is missing.`;
     }
     if (image.base64.length > MAX_IMAGE_BASE64_CHARS) {
       return `The ${side} photograph is too large.`;
+    }
+    // Both go straight into a `data:` URL. Constraining them keeps arbitrary
+    // client text out of a string the upstream API will parse.
+    if (!ALLOWED_MIME_TYPES.has(image.mimeType)) {
+      return `The ${side} photograph is in an unsupported format.`;
+    }
+    if (!BASE64_ONLY.test(image.base64)) {
+      return `The ${side} photograph could not be decoded.`;
     }
   }
   return null;

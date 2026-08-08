@@ -7,13 +7,14 @@ import { CaptureStep } from "@/components/CaptureStep";
 import { Disclaimer, Header, SessionAside } from "@/components/Chrome";
 import { Landing } from "@/components/Landing";
 import { LimitScreen } from "@/components/LimitScreen";
+import { ManualEntry } from "@/components/ManualEntry";
 import { ProcessingStep } from "@/components/ProcessingStep";
 import { ResultsStep } from "@/components/ResultsStep";
 import { ReviewStep } from "@/components/ReviewStep";
 import { SessionListScreen } from "@/components/SessionListScreen";
 import { validateBarcode } from "@/lib/barcode";
 import { downloadCsv } from "@/lib/csv";
-import { processImageFile } from "@/lib/image";
+import { processImageFile, toBase64 } from "@/lib/image";
 import {
   DAILY_LIMIT,
   consumeQuota,
@@ -41,6 +42,7 @@ type Screen =
   | "review"
   | "processing"
   | "results"
+  | "manual"
   | "list"
   | "limit";
 
@@ -131,6 +133,27 @@ export default function Page() {
     [],
   );
 
+  /**
+   * Hand-typed entry. Carries over the barcode if one was already captured, and
+   * marks confidence as certain — a person reading the pack is ground truth,
+   * not a guess. Deliberately consumes no quota: nothing is sent anywhere.
+   */
+  const goManual = useCallback((source?: BarcodeSource, fresh = false) => {
+    setExtractError(null);
+    setDraft((current) => {
+      const base = fresh ? EMPTY_DRAFT : current;
+      return {
+        ...base,
+        // "photo" meant the model would read it; with no model in play, any
+        // barcode here is one the shopkeeper enters by hand.
+        source: source ?? (base.source === "photo" ? "typed" : base.source),
+        confidence: { productName: 1, barcode: 1, price: 1 },
+        form: { ...EMPTY_FORM, barcode: validateBarcode(base.barcodeInput).digits },
+      };
+    });
+    setScreen("manual");
+  }, []);
+
   const skipBarcode = useCallback(() => {
     setDraft((current) => ({ ...current, source: "photo", barcodeInput: "" }));
     setScreen("captureFront");
@@ -167,8 +190,8 @@ export default function Page() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          front: { base64: draft.front.base64, mimeType: draft.front.mimeType },
-          back: { base64: draft.back.base64, mimeType: draft.back.mimeType },
+          front: { base64: toBase64(draft.front), mimeType: draft.front.mimeType },
+          back: { base64: toBase64(draft.back), mimeType: draft.back.mimeType },
           barcode: draft.barcodeInput || null,
           barcodeSource: draft.source,
         }),
@@ -252,6 +275,7 @@ export default function Page() {
               onChange={(value) => patchDraft({ barcodeInput: value })}
               onSubmit={submitBarcode}
               onSkip={skipBarcode}
+              onManual={(source) => goManual(source)}
               onBack={() => setScreen("landing")}
             />
           )}
@@ -291,6 +315,7 @@ export default function Page() {
                 setScreen("captureBack");
               }}
               onExtract={extract}
+              onManual={() => goManual()}
               onBack={() => setScreen("captureBack")}
             />
           )}
@@ -329,6 +354,34 @@ export default function Page() {
             />
           )}
 
+          {screen === "manual" && (
+            <ManualEntry
+              form={draft.form}
+              barcodeVerdict={resultVerdict}
+              reason={
+                remaining <= 0
+                  ? "Today's AI scans are used up, but typing costs nothing — this product will be added straight to your list."
+                  : null
+              }
+              onField={(key, value) =>
+                setDraft((current) => ({
+                  ...current,
+                  form: { ...current.form, [key]: value },
+                }))
+              }
+              onAddAnother={() => {
+                commit();
+                goManual(undefined, true);
+              }}
+              onDone={() => {
+                commit();
+                setDraft(EMPTY_DRAFT);
+                setScreen("list");
+              }}
+              onBack={() => setScreen("landing")}
+            />
+          )}
+
           {screen === "list" && (
             <SessionListScreen
               products={products}
@@ -343,7 +396,11 @@ export default function Page() {
           )}
 
           {screen === "limit" && (
-            <LimitScreen limit={DAILY_LIMIT} onOpenList={() => setScreen("list")} />
+            <LimitScreen
+              limit={DAILY_LIMIT}
+              onOpenList={() => setScreen("list")}
+              onManual={() => goManual(undefined, true)}
+            />
           )}
         </section>
 

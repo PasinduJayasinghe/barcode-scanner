@@ -2,6 +2,8 @@
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
+import type { BarcodeVerdict } from "@/lib/barcode";
+
 type ButtonVariant = "primary" | "secondary" | "quiet" | "link";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -97,6 +99,128 @@ export function ReviewTag({ children = "Review" }: { children?: ReactNode }) {
       {children}
     </span>
   );
+}
+
+/**
+ * One labelled row of the product form. Shared by the extracted-results screen
+ * and manual entry so the two can't drift apart — `trailing` carries the
+ * confidence meter and review tag that only results has.
+ */
+export function FieldRow({
+  id,
+  label,
+  flagged = false,
+  trailing,
+  footer,
+  children,
+}: {
+  id: string;
+  label: string;
+  flagged?: boolean;
+  trailing?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`border-line-soft flex flex-col gap-[7px] border-b border-l-2 pt-3.5 pb-[15px] ${
+        flagged ? "border-l-ink pl-3" : "border-l-transparent"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <label
+          htmlFor={id}
+          className={`text-xs tracking-[0.06em] text-stone uppercase ${
+            flagged ? "font-semibold" : "font-normal"
+          }`}
+        >
+          {label}
+        </label>
+        {trailing && <div className="flex items-center gap-2">{trailing}</div>}
+      </div>
+      {children}
+      {footer}
+    </div>
+  );
+}
+
+/** The input or select inside a FieldRow. */
+export function FieldControl({
+  id,
+  value,
+  onChange,
+  options,
+  placeholder,
+  inputMode,
+  mono = false,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  options?: readonly string[];
+  placeholder?: string;
+  inputMode?: "numeric" | "decimal" | "text";
+  mono?: boolean;
+}) {
+  const base =
+    "border-line-mid min-h-[44px] w-full rounded-[2px] border bg-white px-3 text-[15px]";
+
+  if (options) {
+    return (
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={`${base} cursor-pointer`}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <input
+      id={id}
+      value={value}
+      placeholder={placeholder}
+      inputMode={inputMode}
+      autoComplete="off"
+      onChange={(event) => onChange(event.target.value)}
+      className={`${base} tabular-nums ${mono ? "font-mono tracking-[0.08em]" : ""}`}
+    />
+  );
+}
+
+export function FieldCaption({ children }: { children: ReactNode }) {
+  return <span className="text-[11px] tracking-[0.04em] text-faint">{children}</span>;
+}
+
+/**
+ * What sits under the barcode input: the validation error if there is one, the
+ * store-internal warning if it applies, otherwise whatever caption was passed.
+ */
+export function BarcodeFootnote({
+  verdict,
+  caption,
+}: {
+  verdict: BarcodeVerdict;
+  caption?: string;
+}) {
+  if (verdict.level === "error") return <Notice tone="error">{verdict.message}</Notice>;
+
+  if (verdict.storeInternal) {
+    return (
+      <Notice tone="info">
+        Store-internal barcode. Fine for your own till, but it may not work elsewhere.
+      </Notice>
+    );
+  }
+
+  return caption ? <FieldCaption>{caption}</FieldCaption> : null;
 }
 
 /** Hatched stand-in used wherever a photo hasn't been taken yet. */

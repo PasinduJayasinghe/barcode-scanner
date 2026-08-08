@@ -22,13 +22,29 @@ const listeners = new Set<() => void>();
  * shop's midnight rather than UTC's. The API route enforces the same cap per
  * IP; this copy exists to keep the UI honest, not to be the security boundary.
  */
+/**
+ * React calls `getSnapshot` on every render — often more than once. Hitting
+ * localStorage and running JSON.parse that often is pure waste, so the parsed
+ * value is memoised and only recomputed when the day rolls over or something
+ * writes. Keyed by date so a shop trading past midnight still resets.
+ */
+let cache: { date: string; used: number } | null = null;
+
 export function subscribeQuota(listener: () => void): () => void {
   listeners.add(listener);
-  // Another tab scanning against the same allowance should move this one's counter.
-  window.addEventListener("storage", listener);
+
+  // Another tab scanning against the same allowance should move this one's
+  // counter — but its write invalidates our cache, so drop it before notifying.
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== null && event.key !== STORAGE_KEY) return;
+    cache = null;
+    listener();
+  };
+
+  window.addEventListener("storage", onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener("storage", listener);
+    window.removeEventListener("storage", onStorage);
   };
 }
 
@@ -36,12 +52,21 @@ export function subscribeQuota(listener: () => void): () => void {
 export function getUsedSnapshot(): number {
   if (typeof window === "undefined") return 0;
 
+  const today = localDateKey();
+  if (cache && cache.date === today) return cache.used;
+
+  const used = readFromStorage(today);
+  cache = { date: today, used };
+  return used;
+}
+
+function readFromStorage(today: string): number {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return 0;
 
     const parsed = JSON.parse(raw) as Partial<StoredQuota>;
-    if (parsed.date !== localDateKey() || typeof parsed.used !== "number") return 0;
+    if (parsed.date !== today || typeof parsed.used !== "number") return 0;
 
     return clamp(parsed.used);
   } catch {
@@ -66,10 +91,15 @@ export function exhaustQuota(): number {
 
 function write(used: number): number {
   const next = clamp(used);
+  const today = localDateKey();
+
+  // Update the memoised value first: storage may be unavailable, and the UI
+  // should still reflect the new count for the rest of the session.
+  cache = { date: today, used: next };
 
   if (typeof window !== "undefined") {
     try {
-      const payload: StoredQuota = { date: localDateKey(), used: next };
+      const payload: StoredQuota = { date: today, used: next };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // Private browsing / storage disabled. The server cap still applies.

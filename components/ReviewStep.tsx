@@ -12,6 +12,7 @@ export function ReviewStep({
   onRetakeFront,
   onRetakeBack,
   onExtract,
+  onManual,
   onBack,
 }: {
   barcode: string;
@@ -22,6 +23,7 @@ export function ReviewStep({
   onRetakeFront: () => void;
   onRetakeBack: () => void;
   onExtract: () => void;
+  onManual: () => void;
   onBack: () => void;
 }) {
   return (
@@ -66,6 +68,20 @@ export function ReviewStep({
       <Button onClick={onExtract} disabled={!front || !back}>
         Extract details
       </Button>
+
+      {/* The rescue path: when the model is rate limited, this is the one thing
+          that still works, and it keeps the barcode they already captured. */}
+      <div className="border-line border-t pt-3.5 text-center">
+        <button
+          type="button"
+          onClick={onManual}
+          className="cursor-pointer border-0 bg-transparent px-0.5 py-1.5 text-xs text-faint underline underline-offset-[3px] transition-colors hover:text-ash"
+        >
+          {error
+            ? "Type the details yourself instead"
+            : "Hit the AI limit? Type the details yourself"}
+        </button>
+      </div>
     </div>
   );
 }

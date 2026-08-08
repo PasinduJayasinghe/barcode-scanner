@@ -12,6 +12,7 @@ export function BarcodeStep({
   onChange,
   onSubmit,
   onSkip,
+  onManual,
   onBack,
 }: {
   value: string;
@@ -19,6 +20,8 @@ export function BarcodeStep({
   onChange: (value: string) => void;
   onSubmit: (source: BarcodeSource) => void;
   onSkip: () => void;
+  /** Straight to the hand-typed form, no photos and no model call. */
+  onManual: (source: BarcodeSource) => void;
   onBack: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -113,13 +116,20 @@ export function BarcodeStep({
           <p className="text-center text-xs leading-normal text-muted">{verdict.hint}</p>
         )}
 
-        <div className="border-line border-t pt-3.5 text-center">
+        <div className="border-line flex flex-col items-center gap-1 border-t pt-3.5 text-center">
           <button
             type="button"
             onClick={onSkip}
             className="cursor-pointer border-0 bg-transparent px-0.5 py-1.5 text-xs text-faint underline underline-offset-[3px] transition-colors hover:text-ash"
           >
             Skip — read it from the photo instead
+          </button>
+          <button
+            type="button"
+            onClick={() => onManual(classifySource())}
+            className="cursor-pointer border-0 bg-transparent px-0.5 py-1.5 text-xs text-faint underline underline-offset-[3px] transition-colors hover:text-ash"
+          >
+            Hit the AI limit? Type the details yourself
           </button>
         </div>
       </div>

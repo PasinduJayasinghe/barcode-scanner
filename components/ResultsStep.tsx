@@ -8,7 +8,17 @@ import {
   type FieldConfidence,
   type ProductForm,
 } from "@/lib/types";
-import { Button, ConfidenceMeter, Notice, ReviewTag, StepHeader } from "./ui";
+import {
+  BarcodeFootnote,
+  Button,
+  ConfidenceMeter,
+  FieldCaption,
+  FieldControl,
+  FieldRow,
+  Notice,
+  ReviewTag,
+  StepHeader,
+} from "./ui";
 
 /** Below this, the field gets a review flag rather than being presented as fact. */
 const FLAG_BELOW = 0.6;
@@ -107,69 +117,36 @@ export function ResultsStep({
           const id = `thv-f-${field.key}`;
 
           return (
-            <div
+            <FieldRow
               key={field.key}
-              className={`border-line-soft flex flex-col gap-[7px] border-b pt-3.5 pb-[15px] ${
-                flagged ? "border-l-2 border-l-ink pl-3" : "border-l-2 border-l-transparent"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <label
-                  htmlFor={id}
-                  className={`text-xs tracking-[0.06em] text-stone uppercase ${
-                    flagged ? "font-semibold" : "font-normal"
-                  }`}
-                >
-                  {field.label}
-                </label>
-                <div className="flex items-center gap-2">
+              id={id}
+              label={field.label}
+              flagged={flagged}
+              trailing={
+                <>
                   {flagged && <ReviewTag />}
                   {field.confidence !== undefined && (
                     <ConfidenceMeter value={field.confidence} />
                   )}
-                </div>
-              </div>
-
-              {field.select ? (
-                <select
-                  id={id}
-                  value={form[field.key]}
-                  onChange={(event) => onField(field.key, event.target.value)}
-                  className="border-line-mid min-h-[44px] w-full cursor-pointer rounded-[2px] border bg-white px-3 text-[15px]"
-                >
-                  {CATEGORIES.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  id={id}
-                  value={form[field.key]}
-                  inputMode={field.inputMode}
-                  onChange={(event) => onField(field.key, event.target.value)}
-                  className={`border-line-mid min-h-[44px] w-full rounded-[2px] border bg-white px-3 text-[15px] tabular-nums ${
-                    field.mono ? "font-mono tracking-[0.08em]" : ""
-                  }`}
-                />
-              )}
-
-              {field.key === "barcode" && barcodeVerdict.level === "error" ? (
-                <Notice tone="error">{barcodeVerdict.message}</Notice>
-              ) : field.key === "barcode" && barcodeVerdict.storeInternal ? (
-                <Notice tone="info">
-                  Store-internal barcode. Fine for your own till, but it may not work
-                  elsewhere.
-                </Notice>
-              ) : (
-                field.caption && (
-                  <span className="text-[11px] tracking-[0.04em] text-faint">
-                    {field.caption}
-                  </span>
+                </>
+              }
+              footer={
+                field.key === "barcode" ? (
+                  <BarcodeFootnote verdict={barcodeVerdict} caption={field.caption} />
+                ) : (
+                  field.caption && <FieldCaption>{field.caption}</FieldCaption>
                 )
-              )}
-            </div>
+              }
+            >
+              <FieldControl
+                id={id}
+                value={form[field.key]}
+                onChange={(value) => onField(field.key, value)}
+                options={field.select ? CATEGORIES : undefined}
+                inputMode={field.inputMode}
+                mono={field.mono}
+              />
+            </FieldRow>
           );
         })}
       </div>
