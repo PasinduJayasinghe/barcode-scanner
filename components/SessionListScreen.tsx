@@ -1,6 +1,8 @@
 "use client";
 
-import { findExportBlockers, resolveDuplicateNames } from "@/lib/csv";
+import Link from "next/link";
+
+import { findExportBlockers, resolveDuplicateNames, type ExportProfile } from "@/lib/export";
 import {
   CATEGORIES,
   SOURCE_LABEL,
@@ -16,6 +18,8 @@ const CELL =
 export function SessionListScreen({
   products,
   remaining,
+  profile,
+  exporting,
   onEdit,
   onDelete,
   onDownload,
@@ -23,12 +27,14 @@ export function SessionListScreen({
 }: {
   products: SessionProduct[];
   remaining: number;
+  profile: ExportProfile;
+  exporting: boolean;
   onEdit: (id: string, key: keyof ProductForm, value: string) => void;
   onDelete: (id: string) => void;
   onDownload: () => void;
   onClose: () => void;
 }) {
-  const blockers = findExportBlockers(products);
+  const blockers = findExportBlockers(products, profile);
   const exportNames = resolveDuplicateNames(products);
   const renamed = exportNames.filter((name, i) => name !== products[i].name.trim()).length;
   const canDownload = products.length > 0 && blockers.length === 0;
@@ -147,16 +153,24 @@ export function SessionListScreen({
         </Notice>
       )}
 
-      <div className="border-line bg-paper sticky bottom-[52px] flex items-center justify-between gap-3.5 border-t border-t-ink py-3">
-        <span className="text-[13px] text-ash tabular-nums">
-          {products.length} products · {remaining} scans left
-        </span>
+      <div className="border-line bg-paper sticky bottom-[52px] flex flex-wrap items-center justify-between gap-3.5 border-t border-t-ink py-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-[13px] text-ash tabular-nums">
+            {products.length} products · {remaining} scans left
+          </span>
+          <span className="text-[11px] tracking-[0.04em] text-faint">
+            Format: {profile.name} ({profile.format.toUpperCase()}) ·{" "}
+            <Link href="/settings" className="underline underline-offset-2 hover:text-ink">
+              Change columns
+            </Link>
+          </span>
+        </div>
         <Button
           onClick={onDownload}
-          disabled={!canDownload}
+          disabled={!canDownload || exporting}
           className="!min-h-[46px] !w-auto px-5 text-sm"
         >
-          Download CSV
+          {exporting ? "Preparing…" : `Download ${profile.format.toUpperCase()}`}
         </Button>
       </div>
     </div>

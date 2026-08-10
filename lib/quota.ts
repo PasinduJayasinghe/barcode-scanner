@@ -1,6 +1,6 @@
 "use client";
 
-import { localDateKey } from "./csv";
+import { localDateKey } from "./date";
 
 export const DAILY_LIMIT = 10;
 

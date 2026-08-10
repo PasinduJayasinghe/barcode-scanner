@@ -38,10 +38,22 @@ const MAX_IMAGE_BASE64_CHARS = 1_500_000;
 /** Checked against Content-Length before the body is read into memory. */
 const MAX_BODY_BYTES = 4_500_000;
 
+/**
+ * User-facing copy never names the AI provider or an environment variable.
+ * A shopkeeper can act on neither, and both leak implementation detail onto a
+ * screen a customer reads. The diagnosis stays in the server logs.
+ */
+const UNAVAILABLE = "Scanning is temporarily unavailable. Please try again shortly.";
+const UNREACHABLE =
+  "Couldn't reach the scanning service. Check your connection and try again.";
+
 export async function POST(request: Request): Promise<Response> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return fail("CONFIG", "The server is missing its Groq API key. Set GROQ_API_KEY.", 500);
+    // The shopkeeper can't act on this, so they get the generic message — but a
+    // misconfigured deployment still has to be obvious in the server logs.
+    console.error("[extract] GROQ_API_KEY is not set; extraction is disabled.");
+    return fail("CONFIG", UNAVAILABLE, 500);
   }
 
   // Reject oversized uploads from the header, before `json()` pulls the whole
@@ -69,7 +81,9 @@ export async function POST(request: Request): Promise<Response> {
   // Checked before the call, consumed only after it succeeds.
   const key = clientKey(request);
   if (!hasQuota(key)) {
-    return fail("QUOTA", "You've reached today's limit of 10 products.", 429);
+    // Wording matches the limit screen: the cap is on AI scans, not products —
+    // manual entry stays unlimited.
+    return fail("QUOTA", "You've reached today's limit of 10 AI scans.", 429);
   }
 
   // Digits only, and only if it was a string to begin with — this value is
@@ -80,8 +94,9 @@ export async function POST(request: Request): Promise<Response> {
   let response: Response;
   try {
     response = await callGroq(apiKey, body, suppliedBarcode);
-  } catch {
-    return fail("UPSTREAM", "Couldn't reach Groq. Check your connection and retry.", 502);
+  } catch (error) {
+    console.error("[extract] upstream request threw:", error);
+    return fail("UPSTREAM", UNREACHABLE, 502);
   }
 
   if (!response.ok) {
@@ -92,12 +107,16 @@ export async function POST(request: Request): Promise<Response> {
   const rawText = payload?.choices?.[0]?.message?.content ?? "";
 
   if (!rawText.trim()) {
-    return fail("PARSE", "The model returned an empty response. Try again.", 502);
+    return fail("PARSE", "That scan came back empty. Press Extract to try again.", 502);
   }
 
   const parsed = parseModelJson(rawText);
   if (!parsed) {
-    return fail("PARSE", "The model's reply wasn't valid JSON. This usually clears on a retry.", 502);
+    return fail(
+      "PARSE",
+      "That scan didn't come through cleanly. Press Extract to try again — a second attempt usually works.",
+      502,
+    );
   }
 
   consumeQuota(key);
@@ -279,7 +298,8 @@ async function fromUpstreamError(response: Response): Promise<Response> {
   console.error(`[extract] Groq request failed: ${response.status} ${detail.slice(0, 400)}`);
 
   if (response.status === 401 || response.status === 403) {
-    return fail("CONFIG", "Groq rejected the API key. Check GROQ_API_KEY on the server.", 500);
+    // Logged above with the full upstream body, which names the real cause.
+    return fail("CONFIG", UNAVAILABLE, 500);
   }
 
   if (response.status === 429) {
@@ -290,7 +310,7 @@ async function fromUpstreamError(response: Response): Promise<Response> {
     const seconds = Number.isFinite(wait) && wait > 0 ? wait : 30;
     return fail(
       "RATE_LIMIT",
-      `Groq's per-minute limit is full — two photos use most of it. Wait about ${seconds} seconds and press Extract again. This is Groq's limit, not your daily one, and it hasn't cost you a scan.`,
+      `The scanner is busy right now. Wait about ${seconds} seconds and press Extract again — this isn't your daily limit, and it hasn't cost you a scan.`,
       503,
     );
   }
@@ -299,7 +319,7 @@ async function fromUpstreamError(response: Response): Promise<Response> {
   if (response.status === 503 || response.status === 502) {
     return fail(
       "BUSY",
-      "Groq is busy right now — that's on their side, not yours. Wait a few seconds and press Extract again; it hasn't cost you a scan.",
+      "The scanning service is busy. Wait a few seconds and press Extract again; it hasn't cost you a scan.",
       503,
     );
   }
@@ -308,7 +328,7 @@ async function fromUpstreamError(response: Response): Promise<Response> {
     return fail("BAD_REQUEST", "Those photos were too large to send. Retake them.", 400);
   }
 
-  return fail("UPSTREAM", "Couldn't reach Groq. Check your connection and retry.", 502);
+  return fail("UPSTREAM", UNREACHABLE, 502);
 }
 
 function fail(code: ExtractErrorCode, message: string, status: number): Response {

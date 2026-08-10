@@ -79,27 +79,41 @@ know is good, and helps it pick the right product when a pack shows several numb
 | Contains non-digits | Rejected |
 | Already in this session | Rejected as a duplicate at entry |
 
-## CSV output
+## Export
 
-Filename `thurvate-products-YYYY-MM-DD.csv`. CRLF line endings, UTF-8, **no BOM**. Fields
-containing a comma, quote or newline are quoted.
+The file shape is **data, not code** — an `ExportProfile` describing ordered columns, each
+mapping a header name to a field (or a fixed value). Customers build their own on
+`/settings`; the scanner exports whichever profile is selected.
 
-`Cost` and `Markup` are always `0` — cost comes from the supplier invoice, never from
-packaging. `Price` is the printed MRP.
+**Aronium POS is the built-in default and is locked.** It is covered by a golden-file test:
+its bytes must stay identical to the pre-customisation output, so an existing user sees no
+change. Duplicate it to get an editable copy.
 
-Duplicate product names are resolved before the file is written (second occurrence becomes
-`Name (2)`, and so on), because a repeated name aborts the entire Aronium import. Duplicate
-barcodes are blocked earlier, at entry.
+- Filename `<prefix>-YYYY-MM-DD.<csv|xlsx>`
+- CSV: configurable delimiter, CRLF/LF, optional UTF-8 BOM, optional header row
+- Duplicate product names get a numbered suffix before writing, because a repeated name
+  aborts the whole Aronium import. Duplicate barcodes are blocked earlier, at entry
+- Export blockers are profile-aware: a missing price only blocks if the profile has a Price
+  column
+- The AI disclaimer deliberately does **not** appear in the file — it stays clean for import
 
-The AI disclaimer deliberately does **not** appear in the CSV — the file stays clean for import.
+### CSV and .xlsx differ deliberately
 
-### One thing that may look odd
+A field beginning with `=`, `+`, `-` or `@` is written to **CSV** with a leading apostrophe
+(`'=1+1`). Excel and LibreOffice execute such cells as formulas *even inside quoted fields*,
+and product names originate from OCR of a photographed label — so the first character is
+effectively chosen by whoever printed the packaging.
 
-A field beginning with `=`, `+`, `-` or `@` is written with a leading apostrophe
-(`'=1+1`). Excel and LibreOffice execute such cells as formulas *even inside quoted CSV
-fields*, and product names here originate from OCR of a photographed label — so the first
-character is effectively chosen by whoever printed the packaging. The apostrophe forces the
-cell to be read as text. Nothing is stripped, and ordinary names are untouched.
+**.xlsx does not do this, and must not.** Every cell is written with an explicit type, and
+`type: String` is a different thing from the writer's `type: 'Formula'` — so the value is
+stored as text and never evaluated. Adding the apostrophe there would corrupt the name for
+no gain. Numeric fields are written as real numbers, so a Price column can be summed.
+
+Both behaviours are asserted in tests, including one that unzips a generated `.xlsx` and
+checks the sheet XML contains no formula elements.
+
+The writer (`write-excel-file`) is loaded with a dynamic `import()` and lands in its own
+~83KB chunk, so sessions that never export never download it.
 
 ## Daily quota
 
@@ -138,14 +152,33 @@ precisely.
 
 ```
 app/
-  page.tsx              screen state machine, session list, quota wiring
+  page.tsx              homepage + how-to guide (static)
+  scan/page.tsx         the scanner: screen state machine, session list, quota
+  settings/page.tsx     column profile editor
   api/extract/route.ts  the only place the Groq key is ever touched
 lib/
   barcode.ts            checksum, validation, scanner-vs-typed detection
-  csv.ts                Aronium export, duplicate-name resolution
   prompt.ts             system instruction and task prompt
   image.ts              client-side downscale + JPEG re-encode
+  date.ts               localDateKey, shared by quota and export
   quota.ts              client daily counter
   server-quota.ts       IP-keyed daily counter
+  export/
+    fields.ts           what a column can contain, and how it resolves
+    profile.ts          ExportProfile shape + validation
+    presets.ts          Aronium — the locked built-in
+    csv.ts              CSV writer (apostrophe guard lives here)
+    xlsx.ts             .xlsx writer, dynamically imported
+    store.ts            localStorage profiles, useSyncExternalStore
+    index.ts            downloadExport, filenames, export blockers
 components/             one file per screen, plus shared primitives in ui.tsx
 ```
+
+### Routes
+
+| Route | Contents |
+| --- | --- |
+| `/` | Homepage and how-to guide |
+| `/scan` | The scanner |
+| `/settings` | Column profile editor |
+| `/api/extract` | Groq call — server only |

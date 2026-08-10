@@ -13,7 +13,12 @@ import { ResultsStep } from "@/components/ResultsStep";
 import { ReviewStep } from "@/components/ReviewStep";
 import { SessionListScreen } from "@/components/SessionListScreen";
 import { validateBarcode } from "@/lib/barcode";
-import { downloadCsv } from "@/lib/csv";
+import { downloadExport } from "@/lib/export";
+import {
+  getProfilesServerSnapshot,
+  getProfilesSnapshot,
+  subscribeProfiles,
+} from "@/lib/export/store";
 import { processImageFile, toBase64 } from "@/lib/image";
 import {
   DAILY_LIMIT,
@@ -86,6 +91,16 @@ export default function Page() {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scannerSeen, setScannerSeen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Which column layout the download will use. Lives in localStorage and is
+  // edited on /settings, so it is read through an external store rather than
+  // being passed down.
+  const { selected: profile } = useSyncExternalStore(
+    subscribeProfiles,
+    getProfilesSnapshot,
+    getProfilesServerSnapshot,
+  );
 
   // localStorage isn't readable during the server render, so the counter comes
   // through an external store rather than a mount effect.
@@ -386,11 +401,22 @@ export default function Page() {
             <SessionListScreen
               products={products}
               remaining={remaining}
+              profile={profile}
+              exporting={exporting}
               onEdit={editProduct}
               onDelete={(id) =>
                 setProducts((current) => current.filter((product) => product.id !== id))
               }
-              onDownload={() => downloadCsv(products)}
+              onDownload={async () => {
+                // .xlsx pulls its writer in on demand, so this can take a beat
+                // on a slow connection the first time.
+                setExporting(true);
+                try {
+                  await downloadExport(products, profile);
+                } finally {
+                  setExporting(false);
+                }
+              }}
               onClose={() => setScreen("landing")}
             />
           )}

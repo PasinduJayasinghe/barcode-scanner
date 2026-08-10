@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { SOURCE_LABEL, SOURCE_MARK, type SessionProduct } from "@/lib/types";
 import { Button } from "./ui";
 
@@ -33,6 +35,45 @@ export function Header({
           <span className="font-semibold">{limit}</span> scans left
         </div>
       </div>
+    </header>
+  );
+}
+
+/**
+ * Top bar for the pages that aren't the scanner. Deliberately lighter than
+ * `Header` — a scans-left pill means nothing on a homepage or a settings screen.
+ */
+export function SiteHeader({ current }: { current?: "scan" | "settings" }) {
+  const links: { href: string; label: string; key: "scan" | "settings" }[] = [
+    { href: "/scan", label: "Scanner", key: "scan" },
+    { href: "/settings", label: "Columns", key: "settings" },
+  ];
+
+  return (
+    <header className="border-line bg-paper sticky top-0 z-10 flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-[18px]">
+      <Link href="/" className="flex min-w-0 items-baseline gap-2.5 no-underline">
+        <span className="text-[13px] font-semibold tracking-[0.24em] text-ink">THURVATE</span>
+        <span className="hidden text-[11px] tracking-[0.1em] text-muted uppercase sm:inline">
+          Product Scanner
+        </span>
+      </Link>
+
+      <nav className="flex items-center gap-4">
+        {links.map((link) => (
+          <Link
+            key={link.key}
+            href={link.href}
+            aria-current={current === link.key ? "page" : undefined}
+            className={`text-[13px] no-underline transition-colors hover:text-ink ${
+              current === link.key
+                ? "text-ink underline underline-offset-[5px]"
+                : "text-stone"
+            }`}
+          >
+            {link.label}
+          </Link>
+        ))}
+      </nav>
     </header>
   );
 }
