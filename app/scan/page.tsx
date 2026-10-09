@@ -270,7 +270,12 @@ export default function Page() {
 
   return (
     <>
-      <Header remaining={remaining} limit={DAILY_LIMIT} scannerReady={scannerSeen} />
+      <Header
+        remaining={remaining}
+        limit={DAILY_LIMIT}
+        scannerReady={scannerSeen}
+        unsavedCount={products.length}
+      />
 
       <main className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 items-stretch pb-[52px] lg:grid-cols-[minmax(0,1fr)_340px]">
         <section className="flex min-w-0 flex-col px-5 pt-[26px] pb-10">

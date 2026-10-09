@@ -9,19 +9,35 @@ export function Header({
   remaining,
   limit,
   scannerReady,
+  unsavedCount,
 }: {
   remaining: number;
   limit: number;
   scannerReady: boolean;
+  /** Products held only in page state — leaving the scanner discards them. */
+  unsavedCount: number;
 }) {
   return (
     <header className="border-line bg-paper sticky top-0 z-10 flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-[18px]">
-      <div className="flex min-w-0 items-baseline gap-2.5">
-        <span className="text-[13px] font-semibold tracking-[0.24em]">THURVATE</span>
+      <Link
+        href="/"
+        onClick={(event) => {
+          if (
+            unsavedCount > 0 &&
+            !window.confirm(
+              `Leave the scanner? The ${unsavedCount} product${unsavedCount === 1 ? "" : "s"} in this session haven't been downloaded and will be lost.`,
+            )
+          ) {
+            event.preventDefault();
+          }
+        }}
+        className="flex min-w-0 items-baseline gap-2.5 no-underline"
+      >
+        <span className="text-[13px] font-semibold tracking-[0.24em] text-ink">THURVATE</span>
         <span className="hidden text-[11px] tracking-[0.1em] text-muted uppercase sm:inline">
           Product Scanner
         </span>
-      </div>
+      </Link>
 
       <div className="flex items-center gap-3.5">
         {scannerReady && (

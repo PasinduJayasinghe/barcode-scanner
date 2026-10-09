@@ -4,7 +4,7 @@ Photograph a retail pack, get a row of point-of-sale data. The app captures a pr
 barcode, takes a front and back photo, sends both to Groq in one call, and exports the
 result as a CSV formatted for import into [Aronium POS](https://www.aronium.com/).
 
-Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · Groq `qwen/qwen3.6-27b`.
+Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · Groq `qwen/qwen3.8-27b`.
 No database, no auth, no image storage — photos are processed in the request and discarded.
 
 ## Running it
@@ -20,7 +20,7 @@ else is required.
 
 ### Why Groq, and why this model
 
-`qwen/qwen3.6-27b` is the **only image-capable model on Groq's free tier** — everything
+`qwen/qwen3.8-27b` is the **only image-capable model on Groq's free tier** — everything
 else on offer is text, audio or a safety classifier. It was chosen because it accepts
 **multiple images in one request**, which the design depends on (see below). Verified:
 given the front and back separately labelled, it correctly attributes text to the image it
@@ -124,24 +124,26 @@ failed call is free.
 ### Groq's limits, which are separate — and it's tokens, not requests
 
 The app's 10/day cap is its own; Groq's free tier applies on top of it: **1000 requests per
-day, but only 8000 tokens per minute.**
+day, but only 7000 input tokens per minute.**
 
-Requests are not the constraint — tokens are. A 1024px front-and-back pair costs **~3700
-input tokens**, so in practice you get **about two scans per minute**. Ten products takes
-roughly five minutes of wall clock, not because the model is slow but because the budget
+Requests are not the constraint — tokens are. A front-and-back pair costs **~4200 input tokens**
+(~3600 for the two images, billed at a flat rate whatever their size, plus the prompt), so in
+practice you get **about one scan per minute**. Ten products takes roughly ten minutes of wall clock, not because the model is slow but because the budget
 refills on a rolling minute.
 
-Hitting it produces a distinct `RATE_LIMIT` message quoting Groq's own `retry-after` value,
+If a scan hits the limit, the server waits out Groq's `retry-after` (up to 45s) and
+retries once. If that still fails, it produces a distinct `RATE_LIMIT` message quoting Groq's own `retry-after` value,
 rather than the daily-limit screen — and it does not consume one of your 10 scans.
 
-Two things keep the token cost down:
+What affects the token cost:
 
 - **Thinking is off** (`reasoning_effort: "none"`). Qwen reasons before answering by
   default, spending hundreds of completion tokens against that same ceiling. Reading fields
   off a label is perception, not reasoning; with it off, completions run ~20 tokens.
-- **Images are downscaled to 1024px** before upload ([`lib/image.ts`](lib/image.ts)).
-  Dropping to 768px would roughly halve the token cost and double the scans per minute, at
-  the cost of legibility on small printed MRP text — the one field you least want misread.
+- **Images are downscaled to 1024px** before upload ([`lib/image.ts`](lib/image.ts)) to
+  keep requests small. Shrinking them further does not save tokens — a 576px and a 768px
+  pair were both billed 3601 — so there is no reason to trade away legibility on small MRP
+  text.
 
 ⚠️ The server-side counter lives in memory ([`lib/server-quota.ts`](lib/server-quota.ts)).
 Serverless instances are ephemeral and several may run concurrently, so it is a speed bump

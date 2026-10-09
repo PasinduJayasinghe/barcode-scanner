@@ -21,11 +21,12 @@ const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
  * in one request, which the whole design depends on — the front and back have
  * to be cross-referenced, not read separately.
  *
- * Free-tier limits are 1000 requests/day but only 8000 tokens/minute, and a
- * 1024px image pair costs ~3700 of those. Tokens, not requests, are what runs
+ * Free-tier limits are 1000 requests/day but only 7000 input tokens/minute, and
+ * an image pair costs ~4200 of those (images are billed at a flat rate,
+ * whatever their resolution). Tokens, not requests, are what runs
  * out; see the rate-limit handling below.
  */
-const MODEL = process.env.GROQ_MODEL ?? "qwen/qwen3.6-27b";
+const MODEL = process.env.GROQ_MODEL ?? "qwen/qwen3.8-27b";
 
 /**
  * A 1024px JPEG at 0.8 quality runs 200–400KB, so ~550K base64 characters.
@@ -37,6 +38,9 @@ const MAX_IMAGE_BASE64_CHARS = 1_500_000;
 
 /** Checked against Content-Length before the body is read into memory. */
 const MAX_BODY_BYTES = 4_500_000;
+
+/** Longest rate-limit wait absorbed server-side; two calls must fit in `maxDuration`. */
+const MAX_RETRY_WAIT_SECONDS = 45;
 
 /**
  * User-facing copy never names the AI provider or an environment variable.
@@ -94,6 +98,16 @@ export async function POST(request: Request): Promise<Response> {
   let response: Response;
   try {
     response = await callGroq(apiKey, body, suppliedBarcode);
+
+    // The per-minute token window usually clears within seconds. Waiting it out
+    // once here is better than making the shopkeeper read a message and press
+    // Extract again. Bounded so the request stays well inside `maxDuration`.
+    const wait = retryAfterSeconds(response);
+    if (response.status === 429 && wait <= MAX_RETRY_WAIT_SECONDS) {
+      await response.body?.cancel();
+      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+      response = await callGroq(apiKey, body, suppliedBarcode);
+    }
   } catch (error) {
     console.error("[extract] upstream request threw:", error);
     return fail("UPSTREAM", UNREACHABLE, 502);
@@ -137,7 +151,7 @@ interface GroqResponse {
  *
  * `reasoning_effort: "none"` matters more than it looks. Qwen thinks before
  * answering by default, which spends hundreds of completion tokens against an
- * 8000/minute ceiling and buys nothing: reading fields off a label is
+ * 7000/minute ceiling and buys nothing: reading fields off a label is
  * perception, not reasoning. With it off, completions run ~20 tokens.
  */
 function callGroq(
@@ -304,10 +318,9 @@ async function fromUpstreamError(response: Response): Promise<Response> {
 
   if (response.status === 429) {
     // Tokens per minute, not requests per day, is what actually runs out here —
-    // an image pair costs ~3700 of an 8000/min budget. Groq tells us how long
+    // an image pair costs ~4200 of a 7000/min budget. Groq tells us how long
     // to wait, so pass that on instead of a vague "try later".
-    const wait = Math.ceil(Number(response.headers.get("retry-after") ?? "30"));
-    const seconds = Number.isFinite(wait) && wait > 0 ? wait : 30;
+    const seconds = retryAfterSeconds(response);
     return fail(
       "RATE_LIMIT",
       `The scanner is busy right now. Wait about ${seconds} seconds and press Extract again — this isn't your daily limit, and it hasn't cost you a scan.`,
@@ -329,6 +342,11 @@ async function fromUpstreamError(response: Response): Promise<Response> {
   }
 
   return fail("UPSTREAM", UNREACHABLE, 502);
+}
+
+function retryAfterSeconds(response: Response): number {
+  const wait = Math.ceil(Number(response.headers.get("retry-after") ?? "30"));
+  return Number.isFinite(wait) && wait > 0 ? wait : 30;
 }
 
 function fail(code: ExtractErrorCode, message: string, status: number): Response {
